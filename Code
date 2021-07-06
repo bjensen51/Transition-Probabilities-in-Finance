@@ -1,0 +1,122 @@
+#Before diving into the code and program, I recommend having some prior understanding in the following:
+#Basic statistics and probability theory.
+#Baye's Theorem, particularly the Frequentist interpretation as it is the foundation of this model. https://en.wikipedia.org/wiki/Bayes'_theorem 
+#Markov Chains https://en.wikipedia.org/wiki/Markov_chain
+
+
+#Now, in order to have data to input, it has to be downloaded from a data source. I used data from FactSet to build this, although the source shouldn't matter as long as it is:
+# 1) Accurate
+# 2) Able to be saved in a comma-seperated values (.csv) format
+# 3) In a layout where each row/entry has two corresponding columns/values with the first column/value representing the "Date" that the second column/value ("Price") occured on. For example:
+#  ------------
+#  |date|price|
+#  ------------
+#  |date|price|
+#  ------------
+#  etc....
+
+#Open the Windows Command Prompt, and enter "pip install numpy scipy pandas datetime matplotlib", which will install the packages below. 
+import numpy as np
+import scipy
+import pandas as pd
+import datetime
+import matplotlib.pyplot as matpy 
+
+
+#!!!! Please input the file path of the input data! File path conventions use double backslashes (ie "\\") between folder names
+file_path_1 = "C:\\Users\\...\\SP500_Test_Data.csv"
+
+
+#This function computes the number of 'bins' for a histogram. For our purpose, the term 'bin(s)' refer to the bounds of possible transition states of a Markov Chain.
+#I have adopted this function from the source below:
+#source: https://www.delftstack.com/howto/matplotlib/-how-to-manually-set-the-size-of-the-bins-in-matplotlib/
+
+def find_bins(observations, width):
+    minimmum = np.min(observations)
+    maximmum = np.max(observations)
+    bound_min = -1.0 * (minimmum % width - minimmum)
+    bound_max = maximmum - maximmum % width + width
+    n = int((bound_max - bound_min) / width) + 1
+    bins = np.linspace(bound_min, bound_max, n)
+    return bins
+
+
+#initialize a list of the column names 'Date' and 'Price' to overwrite what is already there 
+
+col_names = ('Date', 'Price')
+
+
+#input the time-series price data into a pandas DataFrame
+
+dt_1 = pd.read_csv(file_path, sep = ",", header=0, names= col_names, parse_dates = True)
+
+
+#Converting the date column into the python datetime format 
+
+dt_1['Date'] = pd.to_datetime(dt_1['Date'], infer_datetime_format=True)
+
+
+#Due to the price data containing commas if the price is >=1000(ie, 1000 is stored as 1,000), the column containing the price data gets converted to a string data type from an object data typethen the comma gets removed 
+
+dt_1['Price'] = dt_1['Price'].astype('string')
+dt_1['Price'] = dt_1['Price'].str.replace(',', '')
+dt_1['Price'] = dt_1['Price'].astype('float')
+
+
+#Calculate price returns using the built-in 'pct_change()' function from Pandas
+
+dt_1['Price Returns'] = dt_1['Price'].pct_change()
+
+
+#In order to make everything past this more effecient, we create a column named 'Price Returns 1' which contains
+#the same data as in 'Price Returns', just lagged by a day
+
+dt_1['Price Returns 1'] = dt_1['Price Returns'].shift(-1)
+
+
+#Now, use the find_bins() function from earlier to determine the bounds of possible 'transition states'.
+#Currently the bins/transition states are equal to a width of 1%
+
+price_series = pd.Series(dt_1['Price Returns'])
+bins = find_bins(price_series, 0.01)
+
+
+#create a temporary series from 'bins' and count the number of 'bins'
+
+bins_s = pd.Series(bins)
+bins_cnt = bins_s.count()
+
+
+#Initialize an two arrays where the X and Y values correspond to 'bins'
+
+count_array = np.empty(shape = (bins_cnt, bins_cnt), dtype = 'int64')
+probability_array = np.empty(shape = (bins_cnt, bins_cnt), dtype = 'float64')
+
+
+#Create another temporary set of series named 'bins_iter' made up of the numbers 0,1,2,...,etc. until it hits 'bin_cnt' for looping/iterration purposes
+
+bins_iter = pd.Series(range(0,bins_cnt))
+
+
+#Iterate/loop over the count_array. 'i' represents the 'Y' axis (the price return of the previous(or current) period)  while 'j' represents the 'X' axis (the return of the current(or future) period).
+#Essentially, the logic behind this loop is that, count the amount of occurances where the price return yesterday is equal to some state/between some bins, and the price return today is equal to another. 
+
+for i in bins_iter: 
+	for j in bins_iter: 
+		if i == 0:
+			count_array[0,j] = dt_1[(dt_1['Price Returns 1'] <= bins[0]) & (dt_1['Price Returns'].between(bins[j - 1],bins[j]))]['Price Returns'].count()
+		if j == 0:
+			count_array[i,0] = dt_1[(dt_1['Price Returns 1'].between(bins[i - 1],bins[i])) & (dt_1['Price Returns'] <= bins[0])]['Price Returns'].count()
+		if i == 0 & j == 0:
+			count_array[0,0] = dt_1[(dt_1['Price Returns 1'] <= bins[0]) & (dt_1['Price Returns'] <= bins[0])]['Price Returns'].count()
+		count_array[i,j] = dt_1[(dt_1['Price Returns 1'].between(bins[i - 1],bins[i])) & (dt_1['Price Returns'].between(bins[j - 1], bins[j]))]['Price Returns'].count()
+
+
+#This loop works similarly to the previous loop, except it takes the # fo observations in each row and divides it by the sum of all the observations within the array to get the associated probability.
+for i in bins_iter:
+    for j in bins_iter:
+        if count_array[i,j] == 0:
+            probability_array[i,j] == 0
+        probability_array[i,j] = count_array[i,j] / count_array[i:].sum()
+        
+print(probability_array)
